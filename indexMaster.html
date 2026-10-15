@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mis gastos de tarjeta</title>
+<style>
+:root{--bg:#f6f5f1;--card:#fff;--tx:#1f2328;--mu:#6b7078;--ln:#e3e1da;--ac:#b45f1b;--ok:#2d7a4b;--bad:#b3392f;color-scheme:light}
+@media(prefers-color-scheme:dark){:root{--bg:#171717;--card:#222;--tx:#ececec;--mu:#9a9a9a;--ln:#383838;--ac:#e08a43;--ok:#5ec388;--bad:#ef7b70;color-scheme:dark}}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:980px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:4px 0 2px}h2{font-size:16px;margin:0 0 10px}
+.mu{color:var(--mu);font-size:13px}
+.card{background:var(--card);border:1px solid var(--ln);border-radius:12px;padding:14px;margin:12px 0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.kpi b{display:block;font-size:20px;margin-top:2px}
+.sc{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:7px 8px;border-bottom:1px solid var(--ln);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--mu);font-weight:600;font-size:12px}
+.up{color:var(--bad)}.dn{color:var(--ok)}
+button,select,input{font:inherit;padding:7px 12px;border-radius:8px;border:1px solid var(--ln);background:var(--card);color:var(--tx)}
+button{cursor:pointer}button.p{background:var(--ac);border-color:var(--ac);color:#fff}
+button:disabled{opacity:.5}
+textarea{width:100%;min-height:110px;box-sizing:border-box;background:var(--bg);color:var(--tx);border:1px solid var(--ln);border-radius:8px;padding:8px;font:13px monospace}
+.bar{display:flex;align-items:center;gap:8px;margin:6px 0}.bar i{display:block;height:18px;background:var(--ac);border-radius:4px;min-width:2px}
+.bar span:first-child{width:80px;font-size:13px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+#st{margin-top:8px;font-size:13px}
+</style></head><body><main>
+<h1>Mis gastos de tarjeta</h1>
+<div class="mu">Mastercard Platinum Galicia · cada mes se identifica por la fecha de vencimiento del resumen · los datos quedan solo en este navegador</div>
+
+<div class="card">
+ <h2>Subir un resumen nuevo</h2>
+ <div class="row"><input type="file" id="f" accept=".pdf,.txt"><label class="mu">Mes (opcional) <input type="month" id="mo"></label><button class="p" id="go">Analizar</button></div>
+ <details style="margin-top:8px"><summary class="mu">¿No lee el PDF? Pegá el texto del resumen</summary><textarea id="tx"></textarea></details>
+ <div id="st" class="mu"></div>
+</div>
+
+<div class="card" id="cf" hidden><h2>Comercios por confirmar</h2><div class="mu" style="margin-bottom:6px">Elegí el rubro y queda guardado para todos los meses.</div><div class="sc"><table id="ct"></table></div></div>
+<div id="empty" class="mu">Todavía no hay resúmenes. Subí el primero.</div>
+<div id="app" hidden>
+ <div class="kpis" id="k"></div>
+ <div class="card"><h2>Histórico</h2><div class="sc"><table id="h"></table></div></div>
+ <div class="card"><h2>Total por mes</h2><div id="b"></div></div>
+ <div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Detalle por rubro</h2><select id="sel"></select></div><div class="sc"><table id="r"></table></div></div>
+</div>
+<div class="card row"><button id="ex">Exportar copia</button><label class="mu">Importar copia <input type="file" id="im" accept=".json"></label></div>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+const CATS={sup:"Supermercado y Alimentos",srv:"Servicios y Suscripciones",ocio:"Restaurantes, Salidas y Ocio",trans:"Transporte y Movilidad",comp:"Compras Generales / Hogar / DIY",salud:"Salud y Bienestar",otros:"Otros / Gastos Varios",conf:"Por confirmar"};
+const RULES=[["salud",["farmac"]],["sup",["market","panaderia","castellana","vea ","pinal","sanjuan","pinocha","coto","carrefour","jumbo","disco","verdul","carnic","supermerc","almacen"]],["trans",["combustible","ypf","shell","axion","neumatic","peaje","uber","cabify","sube"]],["srv",["netflix","spotify","claro","movistar","edenor","edesur","metrogas","aysa","telecentro","youtube","google","apple"]],["ocio",["restaur","resto","cafe","cine","bar "]],["comp",["ferreter","sanitario","libreria","deporte","computacion","arredo","plastico","celula","pigmento"]],["otros",["pettish","pet "]]];
+const MON={ene:1,feb:2,mar:3,abr:4,may:5,jun:6,jul:7,ago:8,sep:9,oct:10,nov:11,dic:12};
+const MES=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+const $=s=>document.querySelector(s);
+const fmt=n=>"$"+Number(n).toLocaleString("es-AR",{minimumFractionDigits:2,maximumFractionDigits:2});
+const pc=n=>(n>0?"+":"")+n.toFixed(2).replace(".",",")+"%";
+const cl=n=>n>0?"up":"dn";
+const num=s=>parseFloat(s.replace(/\./g,"").replace(",","."));
+const ld=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))||d}catch(e){return d}};
+const sv=(k,v)=>localStorage.setItem(k,JSON.stringify(v));
+let S=ld("gt_stmts",[]),MAP=ld("gt_map",{}),sel=null;
+
+const nm=c=>c.toUpperCase().replace(/\s+/g," ").trim();
+function catOf(c){const n=nm(c);if(MAP[n])return MAP[n];const l=n.toLowerCase()+" ";for(const[k,w]of RULES)if(w.some(x=>l.includes(x)))return k;return"conf"}
+function calc(s){const cats={};Object.keys(CATS).forEach(k=>cats[k]=0);
+  if(s.items)s.items.forEach(i=>cats[catOf(i.c)]+=i.m);else Object.assign(cats,s.cats);return cats}
+
+function render(){
+  S.sort((a,b)=>a.key<b.key?-1:1);
+  if(!sel||!S.find(r=>r.key===sel))sel=S.length?S[S.length-1].key:null;
+  $("#app").hidden=!S.length;$("#empty").hidden=!!S.length;
+  const un={};S.forEach(s=>(s.items||[]).forEach(i=>{if(catOf(i.c)==="conf")un[nm(i.c)]=(un[nm(i.c)]||0)+i.m}));
+  const ul=Object.entries(un);$("#cf").hidden=!ul.length;
+  $("#ct").innerHTML=ul.map(([c,m])=>`<tr><td>${c}</td><td>${fmt(m)}</td><td><select data-c="${c}"><option value="">Elegir rubro…</option>${Object.keys(CATS).filter(k=>k!=="conf").map(k=>`<option value="${k}">${CATS[k]}</option>`).join("")}</select></td></tr>`).join("");
+  if(!S.length)return;
+  const R=S.map(s=>({...s,cats:calc(s)}));
+  const avg=R.reduce((a,r)=>a+r.total,0)/R.length,prevOf=i=>i>0?R[i-1].total:(R[i].prev||null);
+  const last=R.length-1,lv=prevOf(last)?(R[last].total/prevOf(last)-1)*100:null,tr=R.length>1?(R[last].total/R[0].total-1)*100:null;
+  $("#k").innerHTML=[["Último mes · "+R[last].label,fmt(R[last].total)],["Vs mes anterior",lv===null?"—":`<span class="${cl(lv)}">${pc(lv)}</span>`],["Promedio mensual",fmt(avg)+`<span class="mu" style="font-size:12px"> (${R.length} meses)</span>`],["Tendencia desde "+R[0].label,tr===null?"—":`<span class="${cl(tr)}">${pc(tr)}</span> ${tr>0?"al alza":"a la baja"}`]].map(([a,b])=>`<div class="card kpi" style="margin:0"><span class="mu">${a}</span><b>${b}</b></div>`).join("");
+  let h="<tr><th>Mes</th><th>Total</th><th>1 pago</th><th>Cuotas</th><th>Rubro principal</th><th>Var. mes ant.</th><th>Desvío vs prom.</th><th></th></tr>";
+  R.forEach((r,i)=>{const p=prevOf(i),v=p?(r.total/p-1)*100:null,d=(r.total/avg-1)*100;
+    const top=Object.entries(r.cats).filter(([k])=>k!=="conf").sort((a,b)=>b[1]-a[1])[0];
+    h+=`<tr><td>${r.label}</td><td>${fmt(r.total)}</td><td>${fmt(r.compras)}</td><td>${fmt(r.cuotas)}</td><td>${top?CATS[top[0]].split(" /")[0]+" ("+(top[1]/r.total*100).toFixed(1).replace(".",",")+"%)":"—"}</td><td class="${v===null?"":cl(v)}">${v===null?"—":pc(v)}</td><td class="${cl(d)}">${pc(d)}</td><td><button data-k="${r.key}" class="x">Borrar</button></td></tr>`});
+  $("#h").innerHTML=h;
+  const mx=Math.max(...R.map(r=>r.total));
+  $("#b").innerHTML=R.map(r=>`<div class="bar"><span>${r.label}</span><i style="width:${r.total/mx*60}%"></i><span class="mu">${fmt(r.total)}</span></div>`).join("");
+  $("#sel").innerHTML=R.map(r=>`<option value="${r.key}" ${r.key===sel?"selected":""}>${r.label}</option>`).join("");
+  const i=R.findIndex(r=>r.key===sel),r=R[i],pr=i>0?R[i-1]:null;
+  let t="<tr><th>Rubro</th><th>Monto</th><th>% del mes</th>"+(pr?"<th>Mes anterior</th><th>Variación</th>":"")+"</tr>";
+  Object.keys(CATS).forEach(k=>{const m=r.cats[k]||0,pm=pr?pr.cats[k]||0:0;
+    t+=`<tr><td>${CATS[k]}</td><td>${fmt(m)}</td><td>${(m/r.total*100).toFixed(1).replace(".",",")}%</td>`+(pr?`<td>${fmt(pm)}</td><td class="${m>pm?"up":"dn"}">${pm?pc((m/pm-1)*100):(m?"nuevo":"—")}</td>`:"")+"</tr>"});
+  t+=`<tr><td><b>Total</b></td><td><b>${fmt(r.total)}</b></td><td>100%</td>`+(pr?`<td>${fmt(pr.total)}</td><td></td>`:"")+"</tr>";
+  $("#r").innerHTML=t;
+}
+$("#sel").onchange=e=>{sel=e.target.value;render()};
+$("#ct").onchange=e=>{const c=e.target.dataset.c;if(c&&e.target.value){MAP[c]=e.target.value;sv("gt_map",MAP);render()}};
+$("#h").onclick=e=>{const b=e.target.closest(".x");if(!b)return;
+  if(b.dataset.s){S=S.filter(s=>s.key!==b.dataset.k);sv("gt_stmts",S);render();return}
+  b.dataset.s=1;b.textContent="¿Seguro?";setTimeout(()=>{b.dataset.s="";b.textContent="Borrar"},3000)};
+
+async function pdfText(file){
+  pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const doc=await pdfjsLib.getDocument({data:await file.arrayBuffer()}).promise;let out="";
+  for(let p=1;p<=doc.numPages;p++){const c=await(await doc.getPage(p)).getTextContent();
+    let y=null;for(const it of c.items){if(y!==null&&Math.abs(it.transform[5]-y)>2)out+="\n";else if(y!==null)out+=" ";out+=it.str;y=it.transform[5]}out+="\n"}
+  return out}
+
+function parse(text){
+  const re=/^(\d{2})-([A-Za-z]{3})\.?-(\d{2})\s+(.+?)\s+(?:(\d{2}\/\d{2})\s+)?(\d{3,5})\s+(-?[\d.]+,\d{2})\s*$/;
+  const items=[];
+  text.split("\n").forEach(l=>{const m=l.trim().match(re);if(!m)return;const v=num(m[7]);if(v<=0)return;items.push({c:m[4].trim(),m:v,t:m[5]?"q":"c"})});
+  const dr=/(\d{2})-([A-Za-z]{3})\.?-(\d{2})/g,ds=[...text.slice(0,3000).matchAll(dr)];
+  const A=/Per[ií]odo de consumos|Ciclo de facturaci/i.test(text.slice(0,3000))||/Cierre\s+anterior/i.test(text.slice(0,600));
+  const d=ds[A?3:1]||ds[1]||ds[0];
+  const key=d?`20${d[3]}-${String(MON[d[2].toLowerCase()]||0).padStart(2,"0")}`:null;
+  const tm=text.match(/(?:TOTAL A PAGAR|TOTAL TITULAR[^\d\n]*)\s*([\d.]+,\d{2})/i);
+  const pm=text.match(/SALDO ANTERIOR\s+([\d.]+,\d{2})/i);
+  return{items,key,declared:tm?num(tm[1]):null,prev:pm?num(pm[1]):null}}
+
+$("#go").onclick=async()=>{
+  const st=$("#st"),btn=$("#go");btn.disabled=true;
+  try{
+    let text=$("#tx").value.trim();const f=$("#f").files[0];
+    if(!text&&f){st.textContent="Leyendo archivo…";text=f.name.toLowerCase().endsWith(".pdf")?await pdfText(f):await f.text()}
+    if(!text){st.textContent="Elegí un archivo o pegá el texto.";return}
+    const r=parse(text);let key=$("#mo").value||r.key;
+    if(!r.items.length)throw new Error("no encontré consumos");
+    if(!key||key.endsWith("-00"))throw new Error("no pude detectar el mes; elegilo en el campo Mes");
+    const sum=Math.round(r.items.reduce((a,i)=>a+i.m,0)*100)/100,total=r.declared||sum;
+    const rd=n=>Math.round(n*100)/100;
+    const s={key,label:MES[+key.slice(5)-1]+" "+key.slice(0,4),total:rd(total),prev:r.prev,compras:rd(r.items.filter(i=>i.t==="c").reduce((a,i)=>a+i.m,0)),cuotas:rd(r.items.filter(i=>i.t==="q").reduce((a,i)=>a+i.m,0)),items:r.items};
+    S=S.filter(x=>x.key!==key);S.push(s);sv("gt_stmts",S);sel=key;render();
+    st.textContent=Math.abs(sum-total)>1?`Guardado, pero los consumos leídos (${fmt(sum)}) no coinciden con el total del resumen (${fmt(total)}). Revisá que el archivo esté completo.`:`Listo: ${r.items.length} consumos leídos, coinciden con el total del resumen.`;
+    $("#f").value="";$("#tx").value="";$("#mo").value="";
+  }catch(e){st.textContent="No se pudo procesar: "+(e.message||"error")+". Probá pegando el texto del resumen."}
+  finally{btn.disabled=false}};
+
+$("#ex").onclick=()=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify({S,MAP})],{type:"application/json"}));a.download="gastos-tarjeta-copia.json";a.click()};
+$("#im").onchange=async e=>{try{const d=JSON.parse(await e.target.files[0].text());S=d.S||[];MAP=d.MAP||{};sv("gt_stmts",S);sv("gt_map",MAP);render()}catch(x){$("#st").textContent="Archivo de copia inválido."}};
+render();
+</script></body></html>
